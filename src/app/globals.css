@@ -1,0 +1,244 @@
+@import "tailwindcss";
+
+:root {
+  --paper-50: #faf9f6;
+  --paper-0: #ffffff;
+  --ink-900: #2b2e33;
+  --ink-600: #5b6168;
+  --ink-300: #d8dbde;
+
+  --physio-700: #256157;
+  --physio-500: #3e8677;
+  --physio-100: #e4f0ec;
+
+  --psych-700: #5b3e70;
+  --psych-500: #7a5b90;
+  --psych-100: #efe7f2;
+
+  --info-700: #3e6382;
+  --info-100: #e6edf2;
+
+  --caution-700: #93601f;
+  --caution-500: #b8792b;
+  --caution-100: #f7eddc;
+
+  --alert-700: #a34a36;
+  --alert-500: #c05f45;
+  --alert-100: #f6e4df;
+
+  --background: var(--paper-50);
+  --foreground: var(--ink-900);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-paper-0: var(--paper-0);
+  --color-ink-600: var(--ink-600);
+  --color-ink-300: var(--ink-300);
+  --color-physio-700: var(--physio-700);
+  --color-physio-500: var(--physio-500);
+  --color-physio-100: var(--physio-100);
+  --color-psych-700: var(--psych-700);
+  --color-psych-500: var(--psych-500);
+  --color-psych-100: var(--psych-100);
+  --color-info-700: var(--info-700);
+  --color-info-100: var(--info-100);
+  --color-caution-700: var(--caution-700);
+  --color-caution-100: var(--caution-100);
+  --color-alert-700: var(--alert-700);
+  --color-alert-100: var(--alert-100);
+  --font-sans: var(--font-plex-sans);
+  --font-serif: var(--font-plex-serif);
+  --font-mono: var(--font-plex-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper-50: #17191b;
+    --paper-0: #202326;
+    --ink-900: #ececec;
+    --ink-600: #9a9fa5;
+    --ink-300: #3a3d41;
+
+    --physio-700: #7fc2b2;
+    --physio-500: #5fa393;
+    --physio-100: #24322e;
+
+    --psych-700: #c7a9db;
+    --psych-500: #a884bd;
+    --psych-100: #302a37;
+
+    --info-700: #9dc0dd;
+    --info-100: #212e38;
+
+    --caution-700: #e2b273;
+    --caution-100: #332a1c;
+
+    --alert-700: #e2a08d;
+    --alert-100: #372420;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-plex-sans), system-ui, sans-serif;
+}
+
+.font-serif {
+  font-family: var(--font-plex-serif), Georgia, serif;
+}
+
+.font-mono {
+  font-family: var(--font-plex-mono), "SFMono-Regular", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Rendered assistant answer content (from react-markdown) */
+.answer h2 {
+  font-family: var(--font-plex-serif), Georgia, serif;
+  font-weight: 600;
+  font-size: 1.25rem;
+  line-height: 1.3;
+  margin: 0;
+}
+
+.answer h3 {
+  font-family: var(--font-plex-sans), sans-serif;
+  font-weight: 600;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-600);
+  margin: 0;
+}
+
+.answer p {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.65;
+}
+
+.answer > *:not(:first-child) {
+  margin-top: 0.85rem;
+}
+
+.answer ul,
+.answer ol {
+  margin: 0;
+  padding-left: 1.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.answer li {
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.answer.domain-physio li::marker {
+  color: var(--physio-700);
+}
+
+.answer.domain-psych li::marker {
+  color: var(--psych-700);
+}
+
+.answer code {
+  font-family: var(--font-plex-mono), monospace;
+  font-size: 0.85em;
+  background: var(--ink-300);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+
+.answer table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.875rem;
+}
+
+.answer th,
+.answer td {
+  text-align: left;
+  padding: 0.5rem 0.7rem;
+  vertical-align: top;
+  border-bottom: 1px solid var(--ink-300);
+}
+
+.answer thead th {
+  border-bottom: 2px solid currentColor;
+  font-weight: 600;
+}
+
+.answer .comparison-card {
+  background: var(--paper-0);
+  border-radius: 12px;
+  padding: 0.75rem 0.85rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 3px 8px rgba(0, 0, 0, 0.04);
+}
+
+.answer .comparison-title {
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.answer .comparison-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 0.6rem;
+}
+
+.answer .comparison-tag {
+  margin: 0 0 0.15rem;
+  font: 600 0.625rem/1.3 var(--font-plex-sans), sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-600);
+}
+
+.answer .comparison-value {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.answer-intro > p:first-of-type {
+  background: var(--info-100);
+  color: var(--foreground);
+  border-radius: 12px;
+  padding: 0.85rem 1rem;
+  font-size: 0.9rem;
+}
+
+.answer-section summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+  padding: 0.6rem 0.1rem;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.answer-section summary::-webkit-details-marker {
+  display: none;
+}
+
+.answer-section .chevron-icon {
+  color: var(--ink-600);
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+
+.answer-section[open] .chevron-icon {
+  transform: rotate(90deg);
+}
+
+.answer-section {
+  border-top: 1px solid var(--ink-300);
+}
