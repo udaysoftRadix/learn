@@ -33,11 +33,21 @@ type ImageAttachment = {
 const FALLBACK_MODELS = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.7-flash", "gemini-flash-latest"];
 
 // If every Gemini model is unavailable, fall back to free models on OpenRouter.
-const OPENROUTER_FALLBACK_MODELS = [
-  "nvidia/nemotron-3-ultra-550b-a55b:free",
-  "google/gemma-4-31b-it:free",
-  "nvidia/nemotron-3.5-lightning:free",
+// Only gemma-4-31b-it accepts image input — if an image is attached and Gemini
+// is exhausted, it's tried first so the image still actually gets answered
+// instead of silently being dropped.
+const OPENROUTER_FALLBACK_MODELS: { model: string; supportsVision: boolean }[] = [
+  { model: "nvidia/nemotron-3-ultra-550b-a55b:free", supportsVision: false },
+  { model: "google/gemma-4-31b-it:free", supportsVision: true },
+  { model: "nvidia/nemotron-3.5-lightning:free", supportsVision: false },
 ];
+
+// Free-tier quota/rate-limit errors look scary in raw form (RESOURCE_EXHAUSTED,
+// quota metric names, retry-info blobs) — not something an end user needs to
+// see. Detect them and show one plain sentence instead.
+function isQuotaOrRateLimitError(errText: string): boolean {
+  return /quota|resource_exhausted|rate limit|429/i.test(errText);
+}
 
 async function callModel(
   apiKey: string,
@@ -90,10 +100,12 @@ async function callModel(
 async function callOpenRouter(
   apiKey: string,
   model: string,
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  image?: ImageAttachment
 ): Promise<{ reply: string } | { error: string; status: number }> {
   let upstream: Response;
   try {
+    const lastIndex = messages.length - 1;
     upstream = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -104,7 +116,16 @@ async function callOpenRouter(
         model,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
-          ...messages.map((m) => ({ role: m.role, content: m.content })),
+          ...messages.map((m, i) => ({
+            role: m.role,
+            content:
+              image && i === lastIndex
+                ? [
+                    { type: "text", text: m.content },
+                    { type: "image_url", image_url: { url: `data:${image.mimeType};base64,${image.data}` } },
+                  ]
+                : m.content,
+          })),
         ],
       }),
       signal: AbortSignal.timeout(30_000),
@@ -173,8 +194,14 @@ export async function POST(req: NextRequest) {
 
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   if (openRouterKey) {
-    for (const model of OPENROUTER_FALLBACK_MODELS) {
-      const result = await callOpenRouter(openRouterKey, model, messages);
+    // If there's an image, try vision-capable fallbacks first so it still
+    // gets answered instead of silently ignored by a text-only model.
+    const orderedFallbacks = image
+      ? [...OPENROUTER_FALLBACK_MODELS].sort((a, b) => Number(b.supportsVision) - Number(a.supportsVision))
+      : OPENROUTER_FALLBACK_MODELS;
+
+    for (const { model, supportsVision } of orderedFallbacks) {
+      const result = await callOpenRouter(openRouterKey, model, messages, supportsVision ? image : undefined);
       if ("reply" in result) {
         return NextResponse.json({ reply: result.reply, model });
       }
@@ -185,8 +212,11 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json(
-    { error: `All models are currently unavailable. Tried:\n${errors.join("\n")}` },
-    { status: 502 }
-  );
+  console.error(`NurseQ chat: all models failed —\n${errors.join("\n")}`);
+
+  const friendlyMessage = errors.every(isQuotaOrRateLimitError)
+    ? "NurseQ is temporarily at capacity (free-tier usage limits on the underlying models). Please try again in a few minutes."
+    : `All models are currently unavailable. Tried:\n${errors.join("\n")}`;
+
+  return NextResponse.json({ error: friendlyMessage }, { status: 502 });
 }

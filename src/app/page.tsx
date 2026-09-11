@@ -56,6 +56,24 @@ function stripBr(text: string): string {
   return text.replace(/<br\s*\/?>/gi, "; ");
 }
 
+// Sending raw Markdown to the TTS model makes it read out "asterisk asterisk"
+// and table pipes, and pads out synthesis time on syntax it shouldn't voice.
+// Strip formatting down to plain, speakable text first.
+function stripMarkdownForSpeech(text: string): string {
+  return text
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^\s*[-*]\s+/gm, "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/\*(.*?)\*/g, "$1")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/^\|?[\s:|-]+\|?$/gm, "")
+    .replace(/\|/g, ", ")
+    .replace(/\n{2,}/g, ". ")
+    .replace(/\n/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 function parseAnswerSections(markdown: string) {
   const lines = markdown.split("\n");
   const introLines: string[] = [];
@@ -197,6 +215,15 @@ function StopIcon() {
   );
 }
 
+function SpinnerIcon() {
+  return (
+    <svg className="spin" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <circle cx="12" cy="12" r="9" opacity="0.25" />
+      <path d="M21 12a9 9 0 0 0-9-9" />
+    </svg>
+  );
+}
+
 function ChevronIcon({ className }: { className?: string }) {
   return (
     <svg className={className} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -250,6 +277,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [speakingIndex, setSpeakingIndex] = useState<number | null>(null);
+  const [ttsLoadingIndex, setTtsLoadingIndex] = useState<number | null>(null);
   const [saved, setSaved] = useState<Set<number>>(new Set());
   const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
@@ -398,28 +426,43 @@ export default function Home() {
       setSpeakingIndex(null);
       return;
     }
+    if (ttsLoadingIndex !== null) return; // already generating one
 
-    setSpeakingIndex(index);
+    setTtsLoadingIndex(index);
     try {
+      // Register the text and get back an id — the actual audio is generated
+      // by GET /api/tts/[id], which the <audio> element below streams from
+      // directly. That lets the browser start playing as bytes arrive
+      // instead of waiting for a full fetch()+blob() download first.
       const res = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text: stripMarkdownForSpeech(text) }),
       });
+      const data = await res.json();
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Could not generate audio.");
       }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
+
+      const audio = new Audio(`/api/tts/${data.id}`);
       audioRef.current = audio;
+      // Flip to "speaking" only once playback actually starts, not on click
+      // or on play() resolving — otherwise the button reads "Stop" while
+      // the stream is still buffering, before any sound has played.
+      audio.onplaying = () => {
+        setTtsLoadingIndex(null);
+        setSpeakingIndex(index);
+      };
       audio.onended = () => setSpeakingIndex(null);
-      audio.onerror = () => setSpeakingIndex(null);
+      audio.onerror = () => {
+        setError("Could not generate audio.");
+        setSpeakingIndex(null);
+        setTtsLoadingIndex(null);
+      };
       await audio.play();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not generate audio.");
-      setSpeakingIndex(null);
+      setTtsLoadingIndex(null);
     }
   }
 
@@ -504,10 +547,11 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={() => speak(i, m.content)}
-                  className="flex items-center gap-1.5 text-xs text-ink-600 hover:text-foreground"
+                  disabled={ttsLoadingIndex !== null && ttsLoadingIndex !== i}
+                  className="flex items-center gap-1.5 text-xs text-ink-600 hover:text-foreground disabled:opacity-40"
                 >
-                  {speakingIndex === i ? <StopIcon /> : <SpeakerIcon />}
-                  {speakingIndex === i ? "Stop" : "Listen"}
+                  {ttsLoadingIndex === i ? <SpinnerIcon /> : speakingIndex === i ? <StopIcon /> : <SpeakerIcon />}
+                  {ttsLoadingIndex === i ? "Generating…" : speakingIndex === i ? "Stop" : "Listen"}
                 </button>
                 {m.model && <p className="text-xs text-ink-600">via {m.model}</p>}
               </div>
