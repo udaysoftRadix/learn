@@ -42,11 +42,38 @@ const OPENROUTER_FALLBACK_MODELS: { model: string; supportsVision: boolean }[] =
   { model: "nvidia/nemotron-3.5-lightning:free", supportsVision: false },
 ];
 
-// Free-tier quota/rate-limit errors look scary in raw form (RESOURCE_EXHAUSTED,
-// quota metric names, retry-info blobs) — not something an end user needs to
-// see. Detect them and show one plain sentence instead.
-function isQuotaOrRateLimitError(errText: string): boolean {
-  return /quota|resource_exhausted|rate limit|429/i.test(errText);
+// Statuses that mean "this specific model/provider is temporarily out of
+// capacity" (quota exhausted, overloaded, gateway timeout, deprecated id) —
+// worth trying the next fallback for, and worth telling the user is a
+// capacity issue rather than a real bug, as opposed to a 400/401/500 class
+// error that indicates something is actually broken in the request itself.
+const TRANSIENT_STATUSES = new Set([429, 404, 503, 504]);
+
+// Of those, only "overloaded" (503) is worth an immediate short retry on the
+// SAME model — it's a fast, explicit rejection from the provider that often
+// clears in a second or two. A 504 already burned the full 30s timeout once;
+// retrying it risks doubling the user's wait for something unlikely to
+// resolve that fast. A quota 429 won't refill in 1.5s, and a 404 means the
+// model id itself is wrong — retrying either just wastes time.
+const RETRY_ONCE_STATUSES = new Set([503]);
+const RETRY_DELAY_MS = 1500;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Gives one attempt a second, immediate try if it failed for a reason that
+// often clears within a second or two (provider overload, a timed-out
+// request) — before falling through to the next model in the fallback chain.
+async function withShortRetry<T extends { reply: string } | { error: string; status: number }>(
+  attempt: () => Promise<T>
+): Promise<T> {
+  const first = await attempt();
+  if ("reply" in first || !RETRY_ONCE_STATUSES.has(first.status)) {
+    return first;
+  }
+  await sleep(RETRY_DELAY_MS);
+  return attempt();
 }
 
 async function callModel(
@@ -179,15 +206,15 @@ export async function POST(req: NextRequest) {
   const primaryModel = process.env.GEMINI_MODEL || FALLBACK_MODELS[0];
   const modelsToTry = [primaryModel, ...FALLBACK_MODELS.filter((m) => m !== primaryModel)];
 
-  const errors: string[] = [];
+  const errors: { model: string; status: number; message: string }[] = [];
   for (const model of modelsToTry) {
-    const result = await callModel(apiKey, model, messages, image);
+    const result = await withShortRetry(() => callModel(apiKey, model, messages, image));
     if ("reply" in result) {
       return NextResponse.json({ reply: result.reply, model });
     }
-    errors.push(`${model}: ${result.error}`);
+    errors.push({ model, status: result.status, message: result.error });
     // Only retry with a different model on transient upstream failures, not our own bugs.
-    if (result.status !== 429 && result.status !== 404 && result.status !== 503 && result.status !== 504) {
+    if (!TRANSIENT_STATUSES.has(result.status)) {
       break;
     }
   }
@@ -201,22 +228,29 @@ export async function POST(req: NextRequest) {
       : OPENROUTER_FALLBACK_MODELS;
 
     for (const { model, supportsVision } of orderedFallbacks) {
-      const result = await callOpenRouter(openRouterKey, model, messages, supportsVision ? image : undefined);
+      const result = await withShortRetry(() =>
+        callOpenRouter(openRouterKey, model, messages, supportsVision ? image : undefined)
+      );
       if ("reply" in result) {
         return NextResponse.json({ reply: result.reply, model });
       }
-      errors.push(`${model}: ${result.error}`);
-      if (result.status !== 429 && result.status !== 404 && result.status !== 503 && result.status !== 504) {
+      errors.push({ model, status: result.status, message: result.error });
+      if (!TRANSIENT_STATUSES.has(result.status)) {
         break;
       }
     }
   }
 
-  console.error(`NurseQ chat: all models failed —\n${errors.join("\n")}`);
+  const detail = errors.map((e) => `${e.model}: ${e.message}`).join("\n");
+  console.error(`NurseQ chat: all models failed —\n${detail}`);
 
-  const friendlyMessage = errors.every(isQuotaOrRateLimitError)
-    ? "NurseQ is temporarily at capacity (free-tier usage limits on the underlying models). Please try again in a few minutes."
-    : `All models are currently unavailable. Tried:\n${errors.join("\n")}`;
+  // Show which models were actually tried (both tiers) so it's visible that
+  // the OpenRouter fallback did run, not just a vague "try again later" —
+  // but without dumping the raw provider error JSON into the chat.
+  const triedList = errors.map((e) => e.model).join(", ");
+  const friendlyMessage = errors.every((e) => TRANSIENT_STATUSES.has(e.status))
+    ? `NurseQ is temporarily at capacity (free-tier usage limits). Tried: ${triedList}. Please try again in a few minutes.`
+    : `All models are currently unavailable. Tried:\n${detail}`;
 
   return NextResponse.json({ error: friendlyMessage }, { status: 502 });
 }

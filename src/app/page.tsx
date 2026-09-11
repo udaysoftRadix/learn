@@ -261,6 +261,10 @@ function WarningIcon() {
 
 const FOLLOW_UPS = ["Explain further", "Give a clinical example", "Summarize key points"];
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function timeNow() {
   return new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
@@ -275,6 +279,7 @@ export default function Home() {
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [speakingIndex, setSpeakingIndex] = useState<number | null>(null);
   const [ttsLoadingIndex, setTtsLoadingIndex] = useState<number | null>(null);
@@ -341,11 +346,35 @@ export default function Home() {
         }
       }
 
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: nextMessages, image: imagePayload }),
-      });
+      const chatBody = JSON.stringify({ messages: nextMessages, image: imagePayload });
+      const requestChat = () =>
+        fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: chatBody,
+        });
+
+      let res: Response;
+      try {
+        res = await requestChat();
+      } catch {
+        // network-level failure (e.g. connection dropped) — one retry after a short pause
+        setRetrying(true);
+        await sleep(3000);
+        setRetrying(false);
+        res = await requestChat();
+      }
+
+      if (res.status === 502) {
+        // every fallback model failed once — give the whole chain one more
+        // pass after a short pause instead of giving up immediately, since
+        // a transient overload often clears within a few seconds.
+        setRetrying(true);
+        await sleep(3000);
+        res = await requestChat();
+        setRetrying(false);
+      }
+
       const data = await res.json();
 
       if (!res.ok) {
@@ -360,6 +389,7 @@ export default function Home() {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
       setLoading(false);
+      setRetrying(false);
       setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 0);
     }
   }
@@ -575,8 +605,9 @@ export default function Home() {
         })}
         {loading && (
           <div className="flex justify-start">
-            <div className="max-w-[80%] rounded-2xl px-4 py-2 text-sm bg-black/5 dark:bg-white/10 text-ink-600">
-              Thinking…
+            <div className="max-w-[80%] rounded-2xl px-4 py-2 text-sm bg-black/5 dark:bg-white/10 text-ink-600 flex items-center gap-2">
+              {retrying && <SpinnerIcon />}
+              {retrying ? "The AI service is busy — retrying…" : "Thinking…"}
             </div>
           </div>
         )}
