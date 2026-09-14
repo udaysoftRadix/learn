@@ -1,8 +1,65 @@
 "use client";
 
+import { useState } from "react";
 import { playClickSound } from "@/components/kimi-ui";
 
 export type ChatSummary = { id: string; title: string };
+
+function ConfirmModal({
+  title,
+  message,
+  confirmLabel,
+  danger,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  danger?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 flex items-center justify-center p-4 z-60" style={{ background: "rgba(0,0,0,0.45)" }} onClick={onCancel}>
+      <div
+        className="rounded-2xl p-5 w-full max-w-xs flex flex-col gap-4"
+        style={{ background: "var(--paper-0)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="font-semibold font-display text-lg">{title}</h2>
+        <p className="text-sm text-ink-600">{message}</p>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              playClickSound();
+              onCancel();
+            }}
+            className="pop-btn pop-btn-subtle rounded-full px-4 py-2 text-sm font-medium"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              playClickSound();
+              onConfirm();
+            }}
+            className="pop-btn rounded-full text-white px-4 py-2 text-sm font-medium"
+            style={
+              danger
+                ? { background: "var(--alert-700)", boxShadow: "0 4px 0 #7a3527, 0 5px 8px rgba(0,0,0,0.15)" }
+                : { background: "var(--user-pink)", boxShadow: "0 4px 0 var(--user-pink-dark), 0 5px 8px rgba(0,0,0,0.15)" }
+            }
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function PlusIcon() {
   return (
@@ -65,6 +122,9 @@ export function ChatSidebar({
   userEmail: string | null;
   onLogout: () => void;
 }) {
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmLogout, setConfirmLogout] = useState(false);
+
   return (
     <>
       {isOpen && <div className="fixed inset-0 bg-black/40 z-40 sm:hidden" onClick={onClose} />}
@@ -112,7 +172,7 @@ export function ChatSidebar({
                 onClick={(e) => {
                   e.stopPropagation();
                   playClickSound();
-                  onDeleteChat(chat.id);
+                  setConfirmDeleteId(chat.id);
                 }}
                 aria-label="Delete chat"
                 className="pop-btn opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 p-1.5 rounded-md hover:bg-black/10 shrink-0 text-ink-600"
@@ -129,7 +189,7 @@ export function ChatSidebar({
             type="button"
             onClick={() => {
               playClickSound();
-              onLogout();
+              setConfirmLogout(true);
             }}
             className="pop-btn pop-btn-subtle rounded-full px-3 py-1.5 text-xs font-medium shrink-0"
           >
@@ -137,6 +197,33 @@ export function ChatSidebar({
           </button>
         </div>
       </aside>
+
+      {confirmDeleteId && (
+        <ConfirmModal
+          title="Delete this chat?"
+          message="This will permanently delete the conversation and everything in it. This can't be undone."
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => {
+            onDeleteChat(confirmDeleteId);
+            setConfirmDeleteId(null);
+          }}
+          onCancel={() => setConfirmDeleteId(null)}
+        />
+      )}
+
+      {confirmLogout && (
+        <ConfirmModal
+          title="Log out?"
+          message="You'll need to log back in to continue chatting with Kimi."
+          confirmLabel="Log out"
+          onConfirm={() => {
+            setConfirmLogout(false);
+            onLogout();
+          }}
+          onCancel={() => setConfirmLogout(false)}
+        />
+      )}
     </>
   );
 }
