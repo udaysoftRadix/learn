@@ -62,8 +62,13 @@
   --font-mono: var(--font-code);
 }
 
+/* Theme resolution: :root alone (above) is the light default. A system
+   preference for dark applies automatically UNLESS the user has explicitly
+   chosen "light" in the app. An explicit "dark" choice applies regardless
+   of system preference. This lets the in-app Light/Dark/System toggle
+   override the OS setting without fighting it. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --paper-50: #17191b;
     --paper-0: #202326;
     --ink-900: #ececec;
@@ -91,6 +96,33 @@
        the solid dark background instead of clashing with the dark palette. */
     --bg-image: none;
   }
+}
+
+:root[data-theme="dark"] {
+  --paper-50: #17191b;
+  --paper-0: #202326;
+  --ink-900: #ececec;
+  --ink-600: #9a9fa5;
+  --ink-300: #3a3d41;
+
+  --physio-700: #7fc2b2;
+  --physio-500: #5fa393;
+  --physio-100: #24322e;
+
+  --psych-700: #c7a9db;
+  --psych-500: #a884bd;
+  --psych-100: #302a37;
+
+  --info-700: #9dc0dd;
+  --info-100: #212e38;
+
+  --caution-700: #e2b273;
+  --caution-100: #332a1c;
+
+  --alert-700: #e2a08d;
+  --alert-100: #372420;
+
+  --bg-image: none;
 }
 
 body {

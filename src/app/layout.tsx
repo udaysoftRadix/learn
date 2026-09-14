@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Fredoka, Nunito, JetBrains_Mono } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 
 // Fredoka + Nunito: a rounded, friendly pairing that matches Kimi's cute
@@ -34,7 +35,14 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${headingFont.variable} ${bodyFont.variable} ${monoFont.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {/* Applies a saved light/dark choice before the page paints, so
+            switching themes doesn't flash the other theme on reload. */}
+        <Script id="theme-init" strategy="beforeInteractive">
+          {`(function(){try{var t=localStorage.getItem('kimi-theme');if(t==='light'||t==='dark'){document.documentElement.setAttribute('data-theme',t);}}catch(e){}})();`}
+        </Script>
+        {children}
+      </body>
     </html>
   );
 }

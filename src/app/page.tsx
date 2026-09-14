@@ -176,6 +176,10 @@ type LogoId = (typeof LOGO_OPTIONS)[number];
 const DEFAULT_LOGO: LogoId = "logo1";
 const LOGO_STORAGE_KEY = "kimi-logo";
 
+type ThemeMode = "system" | "light" | "dark";
+const THEME_STORAGE_KEY = "kimi-theme";
+const THEME_CYCLE: ThemeMode[] = ["system", "light", "dark"];
+
 function LogoImage({ logo, size }: { logo: LogoId; size: number }) {
   return (
     <Image
@@ -323,6 +327,40 @@ function WarningIcon() {
   );
 }
 
+function SunIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="4.5" />
+      <line x1="12" y1="2" x2="12" y2="4.5" />
+      <line x1="12" y1="19.5" x2="12" y2="22" />
+      <line x1="2" y1="12" x2="4.5" y2="12" />
+      <line x1="19.5" y1="12" x2="22" y2="12" />
+      <line x1="4.9" y1="4.9" x2="6.6" y2="6.6" />
+      <line x1="17.4" y1="17.4" x2="19.1" y2="19.1" />
+      <line x1="4.9" y1="19.1" x2="6.6" y2="17.4" />
+      <line x1="17.4" y1="6.6" x2="19.1" y2="4.9" />
+    </svg>
+  );
+}
+
+function MoonIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" />
+    </svg>
+  );
+}
+
+function SystemIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2.5" y="4" width="19" height="13" rx="2" />
+      <line x1="8" y1="21" x2="16" y2="21" />
+      <line x1="12" y1="17" x2="12" y2="21" />
+    </svg>
+  );
+}
+
 const FOLLOW_UPS = ["Create a mind map", "Apply a suitable nursing theory"];
 
 function sleep(ms: number) {
@@ -380,6 +418,7 @@ export default function Home() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [selectedLogo, setSelectedLogo] = useState<LogoId>(DEFAULT_LOGO);
   const [showLogoPicker, setShowLogoPicker] = useState(false);
+  const [theme, setTheme] = useState<ThemeMode>("system");
   const bottomRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -398,12 +437,32 @@ export default function Home() {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedLogo(saved as LogoId);
     }
+
+    // The blocking inline script in layout.tsx already applied a saved
+    // light/dark choice to the DOM before paint (avoiding a theme flash) —
+    // this just syncs this button's own displayed state to match it.
+    const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+    if (savedTheme === "light" || savedTheme === "dark") {
+      setTheme(savedTheme);
+    }
   }, []);
 
   function selectLogo(logo: LogoId) {
     setSelectedLogo(logo);
     localStorage.setItem(LOGO_STORAGE_KEY, logo);
     setShowLogoPicker(false);
+  }
+
+  function cycleTheme() {
+    const next = THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length];
+    setTheme(next);
+    if (next === "system") {
+      localStorage.removeItem(THEME_STORAGE_KEY);
+      document.documentElement.removeAttribute("data-theme");
+    } else {
+      localStorage.setItem(THEME_STORAGE_KEY, next);
+      document.documentElement.setAttribute("data-theme", next);
+    }
   }
 
   async function postMessage(text: string) {
@@ -617,22 +676,36 @@ export default function Home() {
 
   return (
     <div className="flex flex-col flex-1 max-w-2xl w-full mx-auto p-4">
-      <header className="py-4 border-b border-ink-300">
-        <h1 className="text-xl font-semibold font-display flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              playClickSound();
-              setShowLogoPicker(true);
-            }}
-            aria-label="Change Kimi's logo"
-            className="pop-btn rounded-full"
-          >
-            <LogoImage logo={selectedLogo} size={32} />
-          </button>
-          Kimi
-        </h1>
-        <p className="text-sm text-ink-600">Nursing, medicine &amp; mental health research assistant</p>
+      <header className="py-4 border-b border-ink-300 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold font-display flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                playClickSound();
+                setShowLogoPicker(true);
+              }}
+              aria-label="Change Kimi's logo"
+              className="pop-btn rounded-full"
+            >
+              <LogoImage logo={selectedLogo} size={32} />
+            </button>
+            Kimi
+          </h1>
+          <p className="text-sm text-ink-600">Nursing, medicine &amp; mental health research assistant</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            playClickSound();
+            cycleTheme();
+          }}
+          aria-label={`Theme: ${theme}. Click to change.`}
+          title={`Theme: ${theme}`}
+          className="pop-btn pop-btn-subtle w-9 h-9 rounded-full flex items-center justify-center shrink-0 text-ink-600 hover:text-foreground"
+        >
+          {theme === "light" ? <SunIcon /> : theme === "dark" ? <MoonIcon /> : <SystemIcon />}
+        </button>
       </header>
 
       {showLogoPicker && (
