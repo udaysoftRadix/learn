@@ -37,13 +37,31 @@ type Source = { title: string; uri: string };
 const FALLBACK_MODELS = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.7-flash", "gemini-flash-latest"];
 
 // If every Gemini model is unavailable, fall back to free models on OpenRouter.
-// Only gemma-4-31b-it accepts image input — if an image is attached and Gemini
-// is exhausted, it's tried first so the image still actually gets answered
-// instead of silently being dropped.
+// Ordered roughly by fit-for-this-app and capability, then falling off to
+// smaller/more niche models: a health/medicine-tuned model leads, general
+// large reasoning models next, then vision-capable general models, then the
+// smallest/fastest model as a last resort. When an image is attached, the
+// vision-capable ones are additionally sorted to the front (see below) so
+// the image still gets seen instead of silently dropped.
+//
+// Deliberately excluded from OpenRouter's free catalog: coding-agent models
+// (poolside/laguna-s-2.1, nex-agi/nex-n2.5-pro — off-domain for clinical
+// education), a finance-tuned model (inclusionai/ling-3.0-flash-fin), and
+// nvidia/nemotron-3.5-content-safety, which is a moderation/guardrail
+// classifier, not a conversational model — it wouldn't answer "hi" at all.
 const OPENROUTER_FALLBACK_MODELS: { model: string; supportsVision: boolean }[] = [
+  { model: "inclusionai/ling-3.0-flash-sante:free", supportsVision: false }, // health/medicine-tuned
+  { model: "nvidia/nemotron-3-super-120b-a12b:free", supportsVision: false },
   { model: "nvidia/nemotron-3-ultra-550b-a55b:free", supportsVision: false },
-  { model: "google/gemma-4-31b-it:free", supportsVision: true },
   { model: "nvidia/nemotron-3.5-lightning:free", supportsVision: false },
+  { model: "google/gemma-4-31b-it:free", supportsVision: true },
+  { model: "google/gemma-4-26b-a4b-it:free", supportsVision: true },
+  { model: "inclusionai/ling-3.0-flash-vl:free", supportsVision: true },
+  { model: "dots-studio/dots-3-note-preview:free", supportsVision: true },
+  { model: "thinkingmachines/inkling:free", supportsVision: true },
+  { model: "thinkingmachines/inkling-small:free", supportsVision: true },
+  { model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", supportsVision: true },
+  { model: "liquid/lfm-2.5-2.6b:free", supportsVision: false },
 ];
 
 // Statuses that mean "this specific model/provider is temporarily out of
@@ -67,6 +85,11 @@ function sleep(ms: number) {
 }
 
 const REQUEST_TIMEOUT_MS = 30_000;
+// OpenRouter fallbacks get a shorter timeout than Gemini's primary attempts —
+// with 12 of them now in the pool, keeping each attempt short bounds how
+// long a genuine full-outage takes to fail through, rather than potentially
+// several minutes at 30s each.
+const OPENROUTER_TIMEOUT_MS = 15_000;
 
 // A manual AbortController instead of AbortSignal.timeout() — the latter can
 // throw an immutable DOMException that trips an unhandled "Cannot set
@@ -179,7 +202,7 @@ async function callOpenRouter(
           })),
         ],
       }),
-    });
+    }, OPENROUTER_TIMEOUT_MS);
   } catch (err) {
     const timedOut = err instanceof Error && err.name === "AbortError";
     return { error: timedOut ? "timed out" : "network error", status: 504 };
