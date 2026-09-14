@@ -1,8 +1,11 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+
+type SourceLink = { title: string; uri: string };
 
 type Message = {
   role: "user" | "assistant";
@@ -11,6 +14,7 @@ type Message = {
   time?: string;
   attachmentName?: string;
   attachmentUsed?: boolean;
+  sources?: SourceLink[];
 };
 
 type Attachment = {
@@ -19,7 +23,8 @@ type Attachment = {
   dataUrl: string; // full "data:<mime>;base64,<data>" string
 };
 
-const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024;
+const ACCEPTED_ATTACHMENT_TYPES = ["image/png", "image/jpeg", "image/webp", "application/pdf"];
 // Cross-encoder relevance scores from this reranker run roughly 0-1; below
 // this, the attached image is treated as unrelated to the question and
 // isn't sent to the vision model. Rough heuristic, not calibrated against
@@ -158,29 +163,6 @@ const mdComponents = {
   },
 };
 
-function DomainIcon({ domain, size = 13 }: { domain: Domain; size?: number }) {
-  if (domain === "psych") {
-    return (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="var(--psych-700)" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="7" cy="7" r="1.8" /><circle cx="17" cy="7" r="1.8" /><circle cx="12" cy="17" r="1.8" />
-        <line x1="8.6" y1="7.6" x2="15.4" y2="7.6" /><line x1="7.9" y1="8.5" x2="11.1" y2="15.2" /><line x1="16.1" y1="8.5" x2="12.9" y2="15.2" />
-      </svg>
-    );
-  }
-  if (domain === "physio") {
-    return (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="var(--physio-700)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M2 12h3l2-5 3 10 2-13 2 8h3l1.5-3 1.5 3h3.5" />
-      </svg>
-    );
-  }
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="var(--ink-600)" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="8.5" />
-    </svg>
-  );
-}
-
 function BookmarkIcon({ filled, color }: { filled: boolean; color: string }) {
   return (
     <svg width="17" height="17" viewBox="0 0 24 24" fill={filled ? color : "none"} stroke={color} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
@@ -189,11 +171,79 @@ function BookmarkIcon({ filled, color }: { filled: boolean; color: string }) {
   );
 }
 
-function LogoIcon() {
+const LOGO_OPTIONS = ["logo1", "logo2", "logo3"] as const;
+type LogoId = (typeof LOGO_OPTIONS)[number];
+const DEFAULT_LOGO: LogoId = "logo1";
+const LOGO_STORAGE_KEY = "kimi-logo";
+
+function LogoImage({ logo, size }: { logo: LogoId; size: number }) {
   return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--info-700)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M2 12h3l2-5 3 10 2-13 2 8h3l1.5-3 1.5 3h3.5" />
-    </svg>
+    <Image
+      src={`/${logo}.png`}
+      alt="Kimi"
+      width={size}
+      height={size}
+      className="rounded-full object-cover"
+      style={{ width: size, height: size }}
+    />
+  );
+}
+
+function LogoPickerModal({
+  current,
+  onSelect,
+  onClose,
+}: {
+  current: LogoId;
+  onSelect: (logo: LogoId) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 flex items-center justify-center p-4 z-50"
+      style={{ background: "rgba(0,0,0,0.45)" }}
+      onClick={onClose}
+    >
+      <div
+        className="rounded-2xl p-5 w-full max-w-sm flex flex-col gap-4"
+        style={{ background: "var(--paper-0)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="font-semibold font-display text-lg">Choose Kimi&apos;s look</h2>
+        <div className="grid grid-cols-3 gap-3">
+          {LOGO_OPTIONS.map((logo) => (
+            <button
+              key={logo}
+              type="button"
+              onClick={() => {
+                playClickSound();
+                onSelect(logo);
+              }}
+              className="pop-btn rounded-xl p-2 flex items-center justify-center"
+              style={{
+                background: "var(--paper-0)",
+                boxShadow:
+                  logo === current
+                    ? "0 0 0 3px var(--user-pink), 0 3px 0 var(--ink-300), 0 4px 6px rgba(0,0,0,0.08)"
+                    : "0 3px 0 var(--ink-300), 0 4px 6px rgba(0,0,0,0.08)",
+              }}
+            >
+              <Image src={`/${logo}.png`} alt={logo} width={80} height={80} className="rounded-lg object-cover" style={{ width: "100%", height: "auto" }} />
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            playClickSound();
+            onClose();
+          }}
+          className="pop-btn pop-btn-subtle rounded-full px-4 py-2 text-sm font-medium self-end"
+        >
+          Close
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -222,6 +272,20 @@ function SpinnerIcon() {
       <path d="M21 12a9 9 0 0 0-9-9" />
     </svg>
   );
+}
+
+function LinkIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: "2px" }}>
+      <path d="M18 13v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h6" />
+      <polyline points="15 3 21 3 21 9" />
+      <line x1="10" y1="14" x2="21" y2="3" />
+    </svg>
+  );
+}
+
+function isYouTube(uri: string): boolean {
+  return /youtube\.com|youtu\.be/i.test(uri);
 }
 
 function ChevronIcon({ className }: { className?: string }) {
@@ -259,10 +323,34 @@ function WarningIcon() {
   );
 }
 
-const FOLLOW_UPS = ["Explain further", "Give a clinical example", "Summarize key points"];
+const FOLLOW_UPS = ["Create a mind map", "Apply a suitable nursing theory"];
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// A short synthesized "key click" — no audio file needed. Lazily creates one
+// AudioContext on first use (always from within a click handler, so the
+// browser's user-gesture requirement for audio is already satisfied).
+let clickAudioCtx: AudioContext | null = null;
+
+function playClickSound() {
+  try {
+    if (!clickAudioCtx) clickAudioCtx = new AudioContext();
+    const ctx = clickAudioCtx;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "square";
+    osc.frequency.setValueAtTime(1100, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(280, ctx.currentTime + 0.035);
+    gain.gain.setValueAtTime(0.12, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.045);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.05);
+  } catch {
+    // audio isn't essential — never let it break a click
+  }
 }
 
 function timeNow() {
@@ -290,8 +378,33 @@ export default function Home() {
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [ackChecked, setAckChecked] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [selectedLogo, setSelectedLogo] = useState<LogoId>(DEFAULT_LOGO);
+  const [showLogoPicker, setShowLogoPicker] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Read the saved logo preference after mount, not during initial render —
+  // localStorage isn't available server-side, and reading it during the
+  // first render would make the server and client HTML disagree (the same
+  // class of hydration-mismatch bug hit earlier with message timestamps).
+  useEffect(() => {
+    const saved = localStorage.getItem(LOGO_STORAGE_KEY);
+    if (saved && (LOGO_OPTIONS as readonly string[]).includes(saved)) {
+      // One-time sync from an external store (localStorage) on mount — the
+      // deliberate exception to "don't setState in an effect": doing this
+      // via lazy useState init would run on the server too, where
+      // localStorage doesn't exist.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSelectedLogo(saved as LogoId);
+    }
+  }, []);
+
+  function selectLogo(logo: LogoId) {
+    setSelectedLogo(logo);
+    localStorage.setItem(LOGO_STORAGE_KEY, logo);
+    setShowLogoPicker(false);
+  }
 
   async function postMessage(text: string) {
     if (!text || loading) return;
@@ -317,21 +430,27 @@ export default function Home() {
 
       if (currentAttachment) {
         const base64 = currentAttachment.dataUrl.split(",")[1] ?? "";
-        let relevant = true; // fail open if the relevance check itself fails
-        try {
-          const rerankRes = await fetch("/api/rerank", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ query: text, image: currentAttachment.dataUrl }),
-          });
-          if (rerankRes.ok) {
-            const rerankData = await rerankRes.json();
-            if (typeof rerankData.relevanceScore === "number") {
-              relevant = rerankData.relevanceScore >= RELEVANCE_THRESHOLD;
+        let relevant = true; // fail open if the relevance check itself fails (or is skipped)
+
+        // The reranker is documented for document IMAGES specifically — a PDF
+        // isn't a valid input for its "image" field, so skip the relevance
+        // check for PDFs and just send them straight through.
+        if (currentAttachment.mimeType.startsWith("image/")) {
+          try {
+            const rerankRes = await fetch("/api/rerank", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ query: text, image: currentAttachment.dataUrl }),
+            });
+            if (rerankRes.ok) {
+              const rerankData = await rerankRes.json();
+              if (typeof rerankData.relevanceScore === "number") {
+                relevant = rerankData.relevanceScore >= RELEVANCE_THRESHOLD;
+              }
             }
+          } catch {
+            // network hiccup on the relevance check — proceed with the image anyway
           }
-        } catch {
-          // network hiccup on the relevance check — proceed with the image anyway
         }
 
         userMessage.attachmentUsed = relevant;
@@ -383,7 +502,7 @@ export default function Home() {
 
       setMessages([
         ...nextMessages,
-        { role: "assistant", content: data.reply, model: data.model, time: timeNow() },
+        { role: "assistant", content: data.reply, model: data.model, time: timeNow(), sources: data.sources },
       ]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
@@ -428,12 +547,12 @@ export default function Home() {
       setPendingFile(null);
       return;
     }
-    if (!file.type.startsWith("image/")) {
-      setUploadError("Please choose an image file (PNG, JPEG, or WebP).");
+    if (!ACCEPTED_ATTACHMENT_TYPES.includes(file.type)) {
+      setUploadError("Please choose an image (PNG, JPEG, or WebP) or a PDF.");
       setPendingFile(null);
       return;
     }
-    if (file.size > MAX_IMAGE_BYTES) {
+    if (file.size > MAX_ATTACHMENT_BYTES) {
       setUploadError("That file is too large — please choose one under 4 MB.");
       setPendingFile(null);
       return;
@@ -499,11 +618,26 @@ export default function Home() {
   return (
     <div className="flex flex-col flex-1 max-w-2xl w-full mx-auto p-4">
       <header className="py-4 border-b border-ink-300">
-        <h1 className="text-xl font-semibold font-serif flex items-center gap-2">
-          <LogoIcon /> NurseQ
+        <h1 className="text-xl font-semibold font-display flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              playClickSound();
+              setShowLogoPicker(true);
+            }}
+            aria-label="Change Kimi's logo"
+            className="pop-btn rounded-full"
+          >
+            <LogoImage logo={selectedLogo} size={32} />
+          </button>
+          Kimi
         </h1>
         <p className="text-sm text-ink-600">Nursing, medicine &amp; mental health research assistant</p>
       </header>
+
+      {showLogoPicker && (
+        <LogoPickerModal current={selectedLogo} onSelect={selectLogo} onClose={() => setShowLogoPicker(false)} />
+      )}
 
       <div className="flex-1 overflow-y-auto py-4 space-y-6">
         {messages.map((m, i) => {
@@ -512,7 +646,7 @@ export default function Home() {
               <div key={i} className="flex flex-col items-end gap-1">
                 <div
                   className="max-w-[80%] rounded-2xl px-4 py-2 whitespace-pre-wrap text-sm text-white"
-                  style={{ background: "var(--info-700)" }}
+                  style={{ background: "var(--user-pink)" }}
                 >
                   {m.content}
                 </div>
@@ -529,25 +663,22 @@ export default function Home() {
 
           const domain = detectDomain(m.content);
           const domainColor = domain === "psych" ? "var(--psych-700)" : domain === "physio" ? "var(--physio-700)" : "var(--ink-600)";
-          const domainBg = domain === "psych" ? "var(--psych-100)" : domain === "physio" ? "var(--physio-100)" : "var(--ink-300)";
           const { intro, sections } = parseAnswerSections(m.content);
 
           return (
             <div key={i} className="flex flex-col gap-3 max-w-[92%]">
               <div className="flex items-center gap-2">
-                <div
-                  className="w-6 h-6 rounded-full flex items-center justify-center shrink-0"
-                  style={{ background: domainBg }}
-                >
-                  <DomainIcon domain={domain} />
-                </div>
-                <span className="text-xs font-semibold">NurseQ</span>
+                <LogoImage logo={selectedLogo} size={28} />
+                <span className="text-xs font-semibold">Kimi</span>
                 {m.time && <span className="text-xs text-ink-600">{m.time}</span>}
                 <button
                   type="button"
-                  onClick={() => toggleSaved(i)}
+                  onClick={() => {
+                    playClickSound();
+                    toggleSaved(i);
+                  }}
                   aria-label="Save snippet"
-                  className="ml-auto p-1 rounded-md hover:bg-black/5 dark:hover:bg-white/10"
+                  className="pop-btn pop-btn-subtle ml-auto w-8 h-8 rounded-full flex items-center justify-center"
                 >
                   <BookmarkIcon filled={saved.has(i)} color={domainColor} />
                 </button>
@@ -573,12 +704,38 @@ export default function Home() {
                 </details>
               ))}
 
+              {m.sources && m.sources.length > 0 && (
+                <div className="flex flex-col gap-1.5 pt-1 border-t border-ink-300">
+                  <p className="text-xs font-semibold text-ink-600 pt-2">Sources</p>
+                  <ul className="flex flex-col gap-1">
+                    {m.sources.map((s, si) => (
+                      <li key={si} className="flex items-start gap-1.5 text-xs">
+                        <LinkIcon />
+                        <a
+                          href={s.uri}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="hover:underline break-all"
+                          style={{ color: domainColor }}
+                        >
+                          {s.title}
+                          {isYouTube(s.uri) && " (YouTube)"}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => speak(i, m.content)}
+                  onClick={() => {
+                    playClickSound();
+                    speak(i, m.content);
+                  }}
                   disabled={ttsLoadingIndex !== null && ttsLoadingIndex !== i}
-                  className="flex items-center gap-1.5 text-xs text-ink-600 hover:text-foreground disabled:opacity-40"
+                  className="pop-btn pop-btn-subtle flex items-center gap-1.5 text-xs text-ink-600 hover:text-foreground disabled:opacity-40 rounded-full px-3 py-1.5"
                 >
                   {ttsLoadingIndex === i ? <SpinnerIcon /> : speakingIndex === i ? <StopIcon /> : <SpeakerIcon />}
                   {ttsLoadingIndex === i ? "Generating…" : speakingIndex === i ? "Stop" : "Listen"}
@@ -591,10 +748,13 @@ export default function Home() {
                   <button
                     key={f}
                     type="button"
-                    onClick={() => postMessage(f)}
+                    onClick={() => {
+                      playClickSound();
+                      postMessage(f);
+                    }}
                     disabled={loading}
-                    className="rounded-full border border-ink-300 px-3 py-1.5 text-xs font-medium hover:border-current disabled:opacity-40"
-                    style={{ color: domainColor }}
+                    className="pop-btn rounded-full px-3.5 py-2 text-xs font-semibold text-white disabled:opacity-40"
+                    style={{ background: domainColor, boxShadow: "0 4px 0 rgba(0,0,0,0.25), 0 5px 8px rgba(0,0,0,0.15)" }}
                   >
                     {f}
                   </button>
@@ -643,10 +803,13 @@ export default function Home() {
         <form onSubmit={sendMessage} className="flex gap-2 py-1">
           <button
             type="button"
-            onClick={openUploadModal}
+            onClick={() => {
+              playClickSound();
+              openUploadModal();
+            }}
             disabled={loading}
-            aria-label="Attach a document image"
-            className="rounded-full border border-ink-300 w-9 h-9 flex items-center justify-center shrink-0 text-ink-600 hover:text-foreground disabled:opacity-40"
+            aria-label="Attach a document"
+            className="pop-btn pop-btn-subtle w-9 h-9 rounded-full flex items-center justify-center shrink-0 text-ink-600 hover:text-foreground disabled:opacity-40"
           >
             <PaperclipIcon />
           </button>
@@ -659,9 +822,10 @@ export default function Home() {
           />
           <button
             type="submit"
+            onClick={() => playClickSound()}
             disabled={loading || !input.trim()}
-            className="rounded-full text-white px-4 py-2 text-sm font-medium disabled:opacity-40"
-            style={{ background: "var(--info-700)" }}
+            className="pop-btn rounded-full text-white px-4 py-2 text-sm font-medium disabled:opacity-40"
+            style={{ background: "var(--user-pink)", boxShadow: "0 4px 0 var(--user-pink-dark), 0 5px 8px rgba(0,0,0,0.15)" }}
           >
             Send
           </button>
@@ -679,7 +843,7 @@ export default function Home() {
             style={{ background: "var(--paper-0)" }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="font-semibold font-serif text-lg">Attach a document image</h2>
+            <h2 className="font-semibold font-display text-lg">Attach a document</h2>
 
             <div
               className="flex items-start gap-2.5 rounded-lg px-3 py-2.5 text-sm"
@@ -692,11 +856,23 @@ export default function Home() {
             </div>
 
             <input
+              ref={fileInputRef}
               type="file"
-              accept="image/png,image/jpeg,image/webp"
+              accept="image/png,image/jpeg,image/webp,application/pdf"
               onChange={(e) => handleFileChosen(e.target.files?.[0])}
-              className="text-sm"
+              className="hidden"
             />
+            <button
+              type="button"
+              onClick={() => {
+                playClickSound();
+                fileInputRef.current?.click();
+              }}
+              className="pop-btn pop-btn-subtle rounded-xl px-4 py-4 text-sm font-medium flex flex-col items-center justify-center gap-2 text-ink-600 hover:text-foreground"
+            >
+              <PaperclipIcon size={20} />
+              {pendingFile ? pendingFile.name : "Choose an image or PDF"}
+            </button>
             {uploadError && (
               <p className="text-xs" style={{ color: "var(--alert-700)" }}>{uploadError}</p>
             )}
@@ -714,17 +890,23 @@ export default function Home() {
             <div className="flex justify-end gap-2 pt-1">
               <button
                 type="button"
-                onClick={() => setShowUploadModal(false)}
-                className="rounded-full border border-ink-300 px-4 py-2 text-sm font-medium"
+                onClick={() => {
+                  playClickSound();
+                  setShowUploadModal(false);
+                }}
+                className="pop-btn pop-btn-subtle rounded-full px-4 py-2 text-sm font-medium"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={confirmAttachment}
+                onClick={() => {
+                  playClickSound();
+                  confirmAttachment();
+                }}
                 disabled={!pendingFile || !ackChecked}
-                className="rounded-full text-white px-4 py-2 text-sm font-medium disabled:opacity-40"
-                style={{ background: "var(--info-700)" }}
+                className="pop-btn rounded-full text-white px-4 py-2 text-sm font-medium disabled:opacity-40"
+                style={{ background: "var(--info-700)", boxShadow: "0 4px 0 #274a63, 0 5px 8px rgba(0,0,0,0.15)" }}
               >
                 Attach
               </button>

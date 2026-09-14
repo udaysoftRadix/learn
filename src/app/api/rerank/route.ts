@@ -6,6 +6,15 @@ import { NextRequest, NextResponse } from "next/server";
 // the vision-capable chat model, not for ranking multiple candidates.
 const RERANK_MODEL = "nvidia/llama-nemotron-rerank-vl-1b-v2:free";
 
+// A manual AbortController instead of AbortSignal.timeout() — the latter can
+// throw an immutable DOMException that trips an unhandled "Cannot set
+// property message" TypeError downstream on slower requests.
+function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
 export async function POST(req: NextRequest) {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
@@ -30,22 +39,25 @@ export async function POST(req: NextRequest) {
 
   let upstream: Response;
   try {
-    upstream = await fetch("https://openrouter.ai/api/v1/rerank", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+    upstream = await fetchWithTimeout(
+      "https://openrouter.ai/api/v1/rerank",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: RERANK_MODEL,
+          query,
+          documents: [{ image }],
+          top_n: 1,
+        }),
       },
-      body: JSON.stringify({
-        model: RERANK_MODEL,
-        query,
-        documents: [{ image }],
-        top_n: 1,
-      }),
-      signal: AbortSignal.timeout(20_000),
-    });
+      20_000
+    );
   } catch (err) {
-    const timedOut = err instanceof Error && err.name === "TimeoutError";
+    const timedOut = err instanceof Error && err.name === "AbortError";
     return NextResponse.json({ error: timedOut ? "timed out" : "network error" }, { status: 504 });
   }
 

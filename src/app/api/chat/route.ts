@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const SYSTEM_PROMPT = `You are NurseQ, an academic and clinical-education assistant specializing in nursing, medicine, and mental health.
+const SYSTEM_PROMPT = `You are Kimi, an academic and clinical-education assistant specializing in nursing, medicine, and mental health.
 
 You help with things like: human anatomy and physiology, psychiatric and mental health concepts, nursing education (fundamentals through advanced coursework), nursing administration and leadership, advanced nursing practice (nurse practitioner, clinical nurse specialist, nurse anesthetist, nurse midwife, and similar roles), and academic research support for PhD and graduate-level work — explaining research methodologies, structuring literature reviews, clarifying statistical concepts, and discussing theoretical frameworks.
 
@@ -9,10 +9,12 @@ Rules:
 - This is for education and research, not clinical decision-making. Never give a diagnosis, treatment plan, or medication dosage for a specific real patient — point the user to a licensed clinician or their institution's protocols for actual patient care.
 - Never state a specific clinical fact, statistic, drug dosage, or diagnostic criterion with confidence unless you are sure it's correct. If you are not sure, say so explicitly rather than guessing — a plausible-sounding wrong fact is worse than admitting uncertainty, especially in a clinical or psychiatric context.
 - Never fabricate citations, studies, or sources. Only reference research you are confident actually exists, and say so plainly when you are not certain — this matters most for PhD-level research support.
-- Keep answers clear, well-structured, and precise, using correct clinical and academic terminology at a level appropriate for nursing students, faculty, and graduate researchers.
-- Format every answer as Markdown so it can be scanned quickly:
+- Keep answers precise, using correct clinical and academic terminology at a level appropriate for nursing students, faculty, and graduate researchers.
+- Default to thorough, in-depth explanations, not short fragments. Under each heading, write real explanatory paragraphs — cover the mechanism, the "why," and clinical relevance, not just a bare list of facts. Use bullets only for content that is genuinely a list (e.g. a set of symptoms or medications), never as a substitute for explaining a concept in prose. Only give a short, bullet-heavy answer when the user explicitly asks you to shorten it, summarize, or "just give the key points" — and only for that one reply, not the rest of the conversation.
+- If you used the web search results provided to you, say so naturally in the text (e.g. "according to a 2024 review in..." or "per the CDC's guidance...") so the reader knows the kind of source behind a claim. The verified source list is shown separately below your answer from the actual search results — never invent a source, title, author, journal name, or link yourself; only speak to what the search results actually returned.
+- Format every answer as Markdown so it can be scanned:
   - For a short, simple answer (a definition, a quick fact, a one-line clarification), just write plain prose — do not force structure onto something that doesn't need it.
-  - For a longer or multi-part answer, open with one bolded summary line starting with "**TL;DR:**" that gives the core takeaway in a sentence or two, then use "##" headings for main sections and bullet lists for enumerable facts.
+  - For a longer or multi-part answer, open with one bolded summary line starting with "**TL;DR:**" that gives the core takeaway in a sentence or two, then use "##" headings for main sections.
   - If the answer has secondary detail that most readers won't need immediately (e.g. rare side effects, edge cases, interactions), put it under its own "###" heading placed after the main "##" sections — "###" sections render as collapsible, so use them for genuinely secondary detail, not core content.
   - When comparing exactly two things (e.g. two drug classes, two conditions, two roles), use a Markdown table with the compared items as columns. Keep column headers short (2–4 words, e.g. "SSRIs" not "SSRIs (Selective Serotonin Reuptake Inhibitors)") — spell the full term out in the row content instead. Keep table cells to a short phrase, not a full sentence, and never use HTML tags like "<br>" inside a cell — plain Markdown only.
   - Bold key clinical terms the first time they appear in a section.`;
@@ -26,6 +28,8 @@ type ImageAttachment = {
   mimeType: string;
   data: string; // base64, no "data:" prefix
 };
+
+type Source = { title: string; uri: string };
 
 // Google occasionally deprecates/renames model ids and free-tier flash models can return
 // a transient 503 under high demand, so try the configured model first and fall back
@@ -62,6 +66,19 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const REQUEST_TIMEOUT_MS = 30_000;
+
+// A manual AbortController instead of AbortSignal.timeout() — the latter can
+// throw an immutable DOMException that trips an unhandled "Cannot set
+// property message" TypeError somewhere downstream on slower requests (seen
+// with PDF attachments, which take longer for the model to process). A
+// plain AbortController with our own setTimeout avoids that failure mode.
+function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
 // Gives one attempt a second, immediate try if it failed for a reason that
 // often clears within a second or two (provider overload, a timed-out
 // request) — before falling through to the next model in the fallback chain.
@@ -81,17 +98,18 @@ async function callModel(
   model: string,
   messages: ChatMessage[],
   image?: ImageAttachment
-): Promise<{ reply: string } | { error: string; status: number }> {
+): Promise<{ reply: string; sources: Source[] } | { error: string; status: number }> {
   let upstream: Response;
   try {
     const lastIndex = messages.length - 1;
-    upstream = await fetch(
+    upstream = await fetchWithTimeout(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          tools: [{ google_search: {} }],
           contents: messages.map((m, i) => ({
             role: m.role === "assistant" ? "model" : "user",
             parts:
@@ -100,11 +118,10 @@ async function callModel(
                 : [{ text: m.content }],
           })),
         }),
-        signal: AbortSignal.timeout(30_000),
       }
     );
   } catch (err) {
-    const timedOut = err instanceof Error && err.name === "TimeoutError";
+    const timedOut = err instanceof Error && err.name === "AbortError";
     return { error: timedOut ? "timed out" : "network error", status: 504 };
   }
 
@@ -114,14 +131,21 @@ async function callModel(
   }
 
   const data = await upstream.json();
-  const reply: string | undefined = data.candidates?.[0]?.content?.parts
+  const candidate = data.candidates?.[0];
+  const reply: string | undefined = candidate?.content?.parts
     ?.map((p: { text?: string }) => p.text || "")
     .join("");
 
   if (!reply) {
     return { error: "no reply in response", status: 502 };
   }
-  return { reply };
+
+  const chunks: { web?: { uri?: string; title?: string } }[] = candidate?.groundingMetadata?.groundingChunks ?? [];
+  const sources: Source[] = chunks
+    .filter((c) => c.web?.uri)
+    .map((c) => ({ title: c.web!.title || c.web!.uri!, uri: c.web!.uri! }));
+
+  return { reply, sources };
 }
 
 async function callOpenRouter(
@@ -129,11 +153,11 @@ async function callOpenRouter(
   model: string,
   messages: ChatMessage[],
   image?: ImageAttachment
-): Promise<{ reply: string } | { error: string; status: number }> {
+): Promise<{ reply: string; sources: Source[] } | { error: string; status: number }> {
   let upstream: Response;
   try {
     const lastIndex = messages.length - 1;
-    upstream = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    upstream = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -155,10 +179,9 @@ async function callOpenRouter(
           })),
         ],
       }),
-      signal: AbortSignal.timeout(30_000),
     });
   } catch (err) {
-    const timedOut = err instanceof Error && err.name === "TimeoutError";
+    const timedOut = err instanceof Error && err.name === "AbortError";
     return { error: timedOut ? "timed out" : "network error", status: 504 };
   }
 
@@ -173,7 +196,7 @@ async function callOpenRouter(
   if (!reply) {
     return { error: "no reply in response", status: 502 };
   }
-  return { reply };
+  return { reply, sources: [] };
 }
 
 export async function POST(req: NextRequest) {
@@ -210,7 +233,7 @@ export async function POST(req: NextRequest) {
   for (const model of modelsToTry) {
     const result = await withShortRetry(() => callModel(apiKey, model, messages, image));
     if ("reply" in result) {
-      return NextResponse.json({ reply: result.reply, model });
+      return NextResponse.json({ reply: result.reply, model, sources: result.sources });
     }
     errors.push({ model, status: result.status, message: result.error });
     // Only retry with a different model on transient upstream failures, not our own bugs.
@@ -221,18 +244,22 @@ export async function POST(req: NextRequest) {
 
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   if (openRouterKey) {
-    // If there's an image, try vision-capable fallbacks first so it still
-    // gets answered instead of silently ignored by a text-only model.
-    const orderedFallbacks = image
+    // gemma-4-31b-it's image_url field only accepts actual images, not a PDF —
+    // only forward the attachment here when it really is one.
+    const forwardableImage = image?.mimeType.startsWith("image/") ? image : undefined;
+
+    // If there's a forwardable image, try vision-capable fallbacks first so
+    // it still gets answered instead of silently ignored by a text-only model.
+    const orderedFallbacks = forwardableImage
       ? [...OPENROUTER_FALLBACK_MODELS].sort((a, b) => Number(b.supportsVision) - Number(a.supportsVision))
       : OPENROUTER_FALLBACK_MODELS;
 
     for (const { model, supportsVision } of orderedFallbacks) {
       const result = await withShortRetry(() =>
-        callOpenRouter(openRouterKey, model, messages, supportsVision ? image : undefined)
+        callOpenRouter(openRouterKey, model, messages, supportsVision ? forwardableImage : undefined)
       );
       if ("reply" in result) {
-        return NextResponse.json({ reply: result.reply, model });
+        return NextResponse.json({ reply: result.reply, model, sources: result.sources });
       }
       errors.push({ model, status: result.status, message: result.error });
       if (!TRANSIENT_STATUSES.has(result.status)) {
@@ -242,14 +269,14 @@ export async function POST(req: NextRequest) {
   }
 
   const detail = errors.map((e) => `${e.model}: ${e.message}`).join("\n");
-  console.error(`NurseQ chat: all models failed —\n${detail}`);
+  console.error(`Kimi chat: all models failed —\n${detail}`);
 
   // Show which models were actually tried (both tiers) so it's visible that
   // the OpenRouter fallback did run, not just a vague "try again later" —
   // but without dumping the raw provider error JSON into the chat.
   const triedList = errors.map((e) => e.model).join(", ");
   const friendlyMessage = errors.every((e) => TRANSIENT_STATUSES.has(e.status))
-    ? `NurseQ is temporarily at capacity (free-tier usage limits). Tried: ${triedList}. Please try again in a few minutes.`
+    ? `Kimi is temporarily at capacity (free-tier usage limits). Tried: ${triedList}. Please try again in a few minutes.`
     : `All models are currently unavailable. Tried:\n${detail}`;
 
   return NextResponse.json({ error: friendlyMessage }, { status: 502 });

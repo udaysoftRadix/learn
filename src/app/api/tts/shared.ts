@@ -23,6 +23,15 @@ const TTS_MODELS: { model: string; voice?: string }[] = [
   { model: "fish-audio/s2.1-pro-free:free" },
 ];
 
+// A manual AbortController instead of AbortSignal.timeout() — the latter can
+// throw an immutable DOMException that trips an unhandled "Cannot set
+// property message" TypeError downstream on slower requests.
+function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 30_000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
 export async function synthesizeSpeech(
   text: string,
   apiKey: string
@@ -32,7 +41,7 @@ export async function synthesizeSpeech(
   for (const { model, voice } of TTS_MODELS) {
     let upstream: Response;
     try {
-      upstream = await fetch("https://openrouter.ai/api/v1/audio/speech", {
+      upstream = await fetchWithTimeout("https://openrouter.ai/api/v1/audio/speech", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -44,10 +53,9 @@ export async function synthesizeSpeech(
           ...(voice ? { voice } : {}),
           response_format: "mp3",
         }),
-        signal: AbortSignal.timeout(30_000),
       });
     } catch (err) {
-      const timedOut = err instanceof Error && err.name === "TimeoutError";
+      const timedOut = err instanceof Error && err.name === "AbortError";
       errors.push(`${model}: ${timedOut ? "timed out" : "network error"}`);
       continue;
     }
