@@ -2,8 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { LOGO_OPTIONS, LogoId, DEFAULT_LOGO, LOGO_STORAGE_KEY, LogoImage, playClickSound } from "@/components/kimi-ui";
+import { ChatSidebar, MenuIcon, type ChatSummary } from "@/components/chat-sidebar";
+import { createClient } from "@/lib/supabase/client";
 
 type SourceLink = { title: string; uri: string };
 
@@ -171,27 +175,9 @@ function BookmarkIcon({ filled, color }: { filled: boolean; color: string }) {
   );
 }
 
-const LOGO_OPTIONS = ["logo1", "logo2", "logo3"] as const;
-type LogoId = (typeof LOGO_OPTIONS)[number];
-const DEFAULT_LOGO: LogoId = "logo1";
-const LOGO_STORAGE_KEY = "kimi-logo";
-
 type ThemeMode = "system" | "light" | "dark";
 const THEME_STORAGE_KEY = "kimi-theme";
 const THEME_CYCLE: ThemeMode[] = ["system", "light", "dark"];
-
-function LogoImage({ logo, size }: { logo: LogoId; size: number }) {
-  return (
-    <Image
-      src={`/${logo}.png`}
-      alt="Kimi"
-      width={size}
-      height={size}
-      className="rounded-full object-cover"
-      style={{ width: size, height: size }}
-    />
-  );
-}
 
 function LogoPickerModal({
   current,
@@ -367,43 +353,28 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// A short synthesized "key click" — no audio file needed. Lazily creates one
-// AudioContext on first use (always from within a click handler, so the
-// browser's user-gesture requirement for audio is already satisfied).
-let clickAudioCtx: AudioContext | null = null;
-
-function playClickSound() {
-  try {
-    if (!clickAudioCtx) clickAudioCtx = new AudioContext();
-    const ctx = clickAudioCtx;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = "square";
-    osc.frequency.setValueAtTime(1100, ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(280, ctx.currentTime + 0.035);
-    gain.gain.setValueAtTime(0.12, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.045);
-    osc.connect(gain).connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.05);
-  } catch {
-    // audio isn't essential — never let it break a click
-  }
-}
-
 function timeNow() {
   return new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
+function formatTime(iso: string) {
+  return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+const WELCOME_MESSAGE: Message = {
+  role: "assistant",
+  content:
+    "Ask me anything about nursing, anatomy & physiology, psychiatry and mental health, nursing education and administration, advanced practice, or PhD-level research support. This is for education and research — not a substitute for a licensed clinician.",
+};
+
 export default function Home() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: "assistant",
-      content:
-        "Ask me anything about nursing, anatomy & physiology, psychiatry and mental health, nursing education and administration, advanced practice, or PhD-level research support. This is for education and research — not a substitute for a licensed clinician.",
-    },
-  ]);
+  const router = useRouter();
+  const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE]);
   const [input, setInput] = useState("");
+  const [chats, setChats] = useState<ChatSummary[]>([]);
+  const [currentChatId, setCurrentChatId] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -447,6 +418,12 @@ export default function Home() {
     }
   }, []);
 
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => setUserEmail(data.user?.email ?? null));
+    loadChats();
+  }, []);
+
   function selectLogo(logo: LogoId) {
     setSelectedLogo(logo);
     localStorage.setItem(LOGO_STORAGE_KEY, logo);
@@ -462,6 +439,103 @@ export default function Home() {
     } else {
       localStorage.setItem(THEME_STORAGE_KEY, next);
       document.documentElement.setAttribute("data-theme", next);
+    }
+  }
+
+  async function loadChats() {
+    const supabase = createClient();
+    const { data } = await supabase.from("chats").select("id,title").order("updated_at", { ascending: false });
+    if (data) setChats(data);
+  }
+
+  async function loadChat(chatId: string) {
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("messages")
+      .select("role,content,model,sources,attachment_name,attachment_used,created_at")
+      .eq("chat_id", chatId)
+      .order("created_at", { ascending: true });
+
+    setMessages(
+      data && data.length > 0
+        ? data.map((m) => ({
+            role: m.role,
+            content: m.content,
+            model: m.model ?? undefined,
+            sources: m.sources ?? undefined,
+            attachmentName: m.attachment_name ?? undefined,
+            attachmentUsed: m.attachment_used ?? undefined,
+            time: formatTime(m.created_at),
+          }))
+        : [WELCOME_MESSAGE]
+    );
+    setCurrentChatId(chatId);
+    setSidebarOpen(false);
+    setError(null);
+  }
+
+  function startNewChat() {
+    setMessages([WELCOME_MESSAGE]);
+    setCurrentChatId(null);
+    setSidebarOpen(false);
+    setError(null);
+  }
+
+  async function deleteChat(chatId: string) {
+    const supabase = createClient();
+    setChats((prev) => prev.filter((c) => c.id !== chatId));
+    if (chatId === currentChatId) startNewChat();
+    await supabase.from("chats").delete().eq("id", chatId);
+  }
+
+  async function handleLogout() {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.push("/login");
+    router.refresh();
+  }
+
+  // Creates the chat row on the first message of a new conversation, or
+  // returns the existing one. Persistence failures are logged, not
+  // surfaced — the DB schema may not be set up yet, and that shouldn't
+  // block someone from actually getting an answer to their question.
+  async function ensureChatId(firstMessageText: string): Promise<string | null> {
+    if (currentChatId) return currentChatId;
+    try {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return null;
+
+      const title = firstMessageText.length > 60 ? firstMessageText.slice(0, 60) + "…" : firstMessageText;
+      const { data, error } = await supabase.from("chats").insert({ user_id: user.id, title }).select("id").single();
+      if (error || !data) throw error;
+
+      setCurrentChatId(data.id);
+      setChats((prev) => [{ id: data.id, title }, ...prev]);
+      return data.id;
+    } catch (err) {
+      console.error("Could not create chat (has supabase/schema.sql been run yet?):", err);
+      return null;
+    }
+  }
+
+  async function persistMessage(chatId: string | null, message: Message) {
+    if (!chatId) return;
+    try {
+      const supabase = createClient();
+      await supabase.from("messages").insert({
+        chat_id: chatId,
+        role: message.role,
+        content: message.content,
+        model: message.model ?? null,
+        sources: message.sources ?? null,
+        attachment_name: message.attachmentName ?? null,
+        attachment_used: message.attachmentUsed ?? null,
+      });
+    } catch (err) {
+      console.error("Could not save message:", err);
     }
   }
 
@@ -483,6 +557,9 @@ export default function Home() {
     setInput("");
     setError(null);
     setLoading(true);
+
+    const chatId = await ensureChatId(text);
+    if (!currentAttachment) persistMessage(chatId, userMessage);
 
     try {
       let imagePayload: { mimeType: string; data: string } | undefined;
@@ -514,6 +591,7 @@ export default function Home() {
 
         userMessage.attachmentUsed = relevant;
         setMessages([...nextMessages]);
+        persistMessage(chatId, userMessage);
 
         if (relevant) {
           imagePayload = { mimeType: currentAttachment.mimeType, data: base64 };
@@ -559,10 +637,16 @@ export default function Home() {
         throw new Error(data.error || "Something went wrong.");
       }
 
-      setMessages([
-        ...nextMessages,
-        { role: "assistant", content: data.reply, model: data.model, time: timeNow(), sources: data.sources },
-      ]);
+      const assistantMessage: Message = {
+        role: "assistant",
+        content: data.reply,
+        model: data.model,
+        time: timeNow(),
+        sources: data.sources,
+      };
+      setMessages([...nextMessages, assistantMessage]);
+      persistMessage(chatId, assistantMessage);
+      loadChats();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
@@ -675,9 +759,34 @@ export default function Home() {
   }
 
   return (
-    <div className="flex flex-col flex-1 max-w-2xl w-full mx-auto p-4">
+    <div className="flex h-dvh w-full overflow-hidden">
+      <ChatSidebar
+        chats={chats}
+        currentChatId={currentChatId}
+        onSelectChat={loadChat}
+        onNewChat={startNewChat}
+        onDeleteChat={deleteChat}
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        userEmail={userEmail}
+        onLogout={handleLogout}
+      />
+      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+    <div className="flex flex-col flex-1 max-w-2xl w-full mx-auto p-4 overflow-hidden">
       <header className="py-4 border-b border-ink-300 flex items-start justify-between gap-3">
-        <div>
+        <div className="flex items-start gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              playClickSound();
+              setSidebarOpen(true);
+            }}
+            aria-label="Open chat history"
+            className="pop-btn pop-btn-subtle w-9 h-9 rounded-full flex items-center justify-center shrink-0 text-ink-600 hover:text-foreground sm:hidden mt-0.5"
+          >
+            <MenuIcon />
+          </button>
+          <div>
           <h1 className="text-xl font-semibold font-display flex items-center gap-2">
             <button
               type="button"
@@ -693,6 +802,7 @@ export default function Home() {
             Kimi
           </h1>
           <p className="text-sm text-ink-600">Nursing, medicine &amp; mental health research assistant</p>
+          </div>
         </div>
         <button
           type="button"
@@ -987,6 +1097,8 @@ export default function Home() {
           </div>
         </div>
       )}
+    </div>
+      </div>
     </div>
   );
 }
