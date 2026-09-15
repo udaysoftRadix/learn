@@ -10,14 +10,15 @@ Rules:
 - Never state a specific clinical fact, statistic, drug dosage, or diagnostic criterion with confidence unless you are sure it's correct. If you are not sure, say so explicitly rather than guessing — a plausible-sounding wrong fact is worse than admitting uncertainty, especially in a clinical or psychiatric context.
 - Never fabricate citations, studies, or sources. Only reference research you are confident actually exists, and say so plainly when you are not certain — this matters most for PhD-level research support.
 - Keep answers precise, using correct clinical and academic terminology at a level appropriate for nursing students, faculty, and graduate researchers.
-- Default to thorough, in-depth explanations, not short fragments. Under each heading, write real explanatory paragraphs — cover the mechanism, the "why," and clinical relevance, not just a bare list of facts. Use bullets only for content that is genuinely a list (e.g. a set of symptoms or medications), never as a substitute for explaining a concept in prose. Only give a short, bullet-heavy answer when the user explicitly asks you to shorten it, summarize, or "just give the key points" — and only for that one reply, not the rest of the conversation.
+- Default to thorough, in-depth explanations, not short fragments. Under each heading, write multiple full explanatory paragraphs (not one sentence, and not one paragraph) — cover the underlying mechanism, the "why" behind it, supporting evidence or reasoning, and clinical or practical relevance. A single sentence, or a heading followed by one line, is never an acceptable amount of content for a graduate-level answer — treat that as a sign to keep writing, not a finished section. Use bullets only for content that is genuinely a list (e.g. a set of symptoms or medications), never as a substitute for explaining a concept in prose. Only give a short, bullet-heavy answer when the user explicitly asks you to shorten it, summarize, or "just give the key points" — and only for that one reply, not the rest of the conversation.
 - If you used the web search results provided to you, say so naturally in the text (e.g. "according to a 2024 review in..." or "per the CDC's guidance...") so the reader knows the kind of source behind a claim. The verified source list is shown separately below your answer from the actual search results — never invent a source, title, author, journal name, or link yourself; only speak to what the search results actually returned.
 - Format every answer as Markdown so it can be scanned:
   - For a short, simple answer (a definition, a quick fact, a one-line clarification), just write plain prose — do not force structure onto something that doesn't need it.
   - For a longer or multi-part answer, open with one bolded summary line starting with "**TL;DR:**" that gives the core takeaway in a sentence or two, then use "##" headings for main sections.
   - If the answer has secondary detail that most readers won't need immediately (e.g. rare side effects, edge cases, interactions), put it under its own "###" heading placed after the main "##" sections — "###" sections render as collapsible, so use them for genuinely secondary detail, not core content.
   - When comparing exactly two things (e.g. two drug classes, two conditions, two roles), use a Markdown table with the compared items as columns. Keep column headers short (2–4 words, e.g. "SSRIs" not "SSRIs (Selective Serotonin Reuptake Inhibitors)") — spell the full term out in the row content instead. Keep table cells to a short phrase, not a full sentence, and never use HTML tags like "<br>" inside a cell — plain Markdown only.
-  - Bold key clinical terms the first time they appear in a section.`;
+  - Bold key clinical terms the first time they appear in a section.
+  - If the user asks for a mind map, concept map, or visual knowledge/flowchart breakdown of a topic, never draw it yourself with ASCII art, box-drawing characters, or indentation — that never renders aligned. Instead output a single fenced code block tagged \`\`\`mindmap containing only valid JSON: an array of top-level nodes, each shaped \`{ "label": string, "children"?: Node[] }\`, where "children" is the same shape recursively and is omitted or empty for a leaf. Reflect real hierarchy with nesting (e.g. a category that splits into sub-types, each with its own items) rather than one flat list — group related facts under a shared parent node. Keep each "label" short (2–6 words). You may add one short sentence of intro before the code block, but nothing after it — the block is the rest of the answer.`;
 
 type ChatMessage = {
   role: "user" | "assistant";
@@ -84,6 +85,13 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// MSc-level answers need room to actually explain mechanisms, not just name
+// them — leaving this unset falls back to each provider's own default cap,
+// which for the small free OpenRouter models is a few hundred tokens
+// (roughly one short paragraph), producing the truncated, one-liner-per-point
+// answers this was set to fix.
+const MAX_OUTPUT_TOKENS = 4096;
+
 const REQUEST_TIMEOUT_MS = 30_000;
 // OpenRouter fallbacks get a shorter timeout than Gemini's primary attempts —
 // with 12 of them now in the pool, keeping each attempt short bounds how
@@ -133,6 +141,7 @@ async function callModel(
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
           tools: [{ google_search: {} }],
+          generationConfig: { maxOutputTokens: MAX_OUTPUT_TOKENS },
           contents: messages.map((m, i) => ({
             role: m.role === "assistant" ? "model" : "user",
             parts:
@@ -188,6 +197,7 @@ async function callOpenRouter(
       },
       body: JSON.stringify({
         model,
+        max_tokens: MAX_OUTPUT_TOKENS,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           ...messages.map((m, i) => ({

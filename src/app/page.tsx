@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { isValidElement, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { LOGO_OPTIONS, LogoId, DEFAULT_LOGO, LOGO_STORAGE_KEY, LogoImage, playClickSound } from "@/components/kimi-ui";
 import { ChatSidebar, MenuIcon, type ChatSummary } from "@/components/chat-sidebar";
+import { MindMap, parseMindMap } from "@/components/mind-map";
 import { createClient } from "@/lib/supabase/client";
 
 type SourceLink = { title: string; uri: string };
@@ -120,52 +121,74 @@ function textOf(node: HastNode | undefined): string {
 // Markdown tables render as a real <table> on wider screens, and as stacked
 // comparison cards on narrow ones — a wide data table just clips text on a
 // phone, it doesn't reflow, so both layouts are rendered from the same cells.
-const mdComponents = {
-  table: ({ node, children }: { node?: HastNode; children?: React.ReactNode }) => {
-    const headCells: string[] = [];
-    const rows: string[][] = [];
-    for (const child of node?.children ?? []) {
-      if (child.tagName === "thead") {
-        const tr = child.children?.find((c) => c.tagName === "tr");
-        for (const th of tr?.children ?? []) {
-          if (th.tagName === "th") headCells.push(textOf(th));
-        }
-      }
-      if (child.tagName === "tbody") {
-        for (const tr of child.children ?? []) {
-          if (tr.tagName !== "tr") continue;
-          rows.push((tr.children ?? []).filter((td) => td.tagName === "td").map(textOf));
-        }
+function TableRenderer({ node, children }: { node?: HastNode; children?: React.ReactNode }) {
+  const headCells: string[] = [];
+  const rows: string[][] = [];
+  for (const child of node?.children ?? []) {
+    if (child.tagName === "thead") {
+      const tr = child.children?.find((c) => c.tagName === "tr");
+      for (const th of tr?.children ?? []) {
+        if (th.tagName === "th") headCells.push(textOf(th));
       }
     }
+    if (child.tagName === "tbody") {
+      for (const tr of child.children ?? []) {
+        if (tr.tagName !== "tr") continue;
+        rows.push((tr.children ?? []).filter((td) => td.tagName === "td").map(textOf));
+      }
+    }
+  }
 
-    return (
-      <>
-        <div className="hidden sm:block" style={{ overflowX: "auto" }}>
-          <table>{children}</table>
-        </div>
-        <div className="sm:hidden flex flex-col gap-2">
-          {rows.map((row, ri) => {
-            const [title, ...rest] = row;
-            return (
-              <div key={ri} className="comparison-card">
-                <p className="comparison-title">{title}</p>
-                <div className="comparison-grid">
-                  {rest.map((cell, ci) => (
-                    <div key={ci}>
-                      <p className="comparison-tag">{headCells[ci + 1] ?? ""}</p>
-                      <p className="comparison-value">{cell}</p>
-                    </div>
-                  ))}
-                </div>
+  return (
+    <>
+      <div className="hidden sm:block" style={{ overflowX: "auto" }}>
+        <table>{children}</table>
+      </div>
+      <div className="sm:hidden flex flex-col gap-2">
+        {rows.map((row, ri) => {
+          const [title, ...rest] = row;
+          return (
+            <div key={ri} className="comparison-card">
+              <p className="comparison-title">{title}</p>
+              <div className="comparison-grid">
+                {rest.map((cell, ci) => (
+                  <div key={ci}>
+                    <p className="comparison-tag">{headCells[ci + 1] ?? ""}</p>
+                    <p className="comparison-value">{cell}</p>
+                  </div>
+                ))}
               </div>
-            );
-          })}
-        </div>
-      </>
-    );
-  },
-};
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+// A "create a mind map" reply comes back as a fenced ```mindmap code block
+// containing JSON (see the system prompt) rather than the model drawing its
+// own ASCII-art boxes, which never aligned reliably. `accent` ties the
+// diagram's colors to the same per-message domain color used elsewhere.
+function getMdComponents(accent: string) {
+  return {
+    table: TableRenderer,
+    code: ({ className, children }: { className?: string; children?: React.ReactNode }) => {
+      const lang = /language-(\w+)/.exec(className || "")?.[1];
+      if (lang === "mindmap") {
+        const raw = (Array.isArray(children) ? children.join("") : String(children ?? "")).replace(/\n$/, "");
+        const data = parseMindMap(raw);
+        if (data) return <MindMap data={data} accent={accent} />;
+      }
+      return <code className={className}>{children}</code>;
+    },
+    pre: ({ children }: { children?: React.ReactNode }) => {
+      const child = Array.isArray(children) ? children[0] : children;
+      if (isValidElement(child) && child.type === MindMap) return <>{children}</>;
+      return <pre>{children}</pre>;
+    },
+  };
+}
 
 function BookmarkIcon({ filled, color }: { filled: boolean; color: string }) {
   return (
@@ -347,7 +370,12 @@ function SystemIcon() {
   );
 }
 
-const FOLLOW_UPS = ["Create a mind map", "Apply a suitable nursing theory"];
+const FOLLOW_UPS = [
+  "Summarize key points",
+  "Explain with examples and scenarios",
+  "Create a mind map",
+  "Apply a suitable nursing theory",
+];
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -846,6 +874,11 @@ export default function Home() {
 
           const domain = detectDomain(m.content);
           const domainColor = domain === "psych" ? "var(--psych-700)" : domain === "physio" ? "var(--physio-700)" : "var(--ink-600)";
+          // Mind maps need a real accent even with no detected domain — the
+          // grey domainColor fallback is exactly the "greyed-out, disabled"
+          // look the diagram redesign was meant to get away from.
+          const diagramAccent = domain === "psych" ? "var(--psych-700)" : domain === "physio" ? "var(--physio-700)" : "var(--info-700)";
+          const mdComponents = getMdComponents(diagramAccent);
           const { intro, sections } = parseAnswerSections(m.content);
 
           return (
