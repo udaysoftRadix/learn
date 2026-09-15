@@ -223,7 +223,7 @@ function LogoPickerModal({
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="font-semibold font-display text-lg">Choose Kimi&apos;s look</h2>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           {LOGO_OPTIONS.map((logo) => (
             <button
               key={logo}

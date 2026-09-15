@@ -5,7 +5,7 @@ import Image from "next/image";
 // Shared branding bits used by both the main chat page and the login page,
 // so both stay visually and behaviorally consistent.
 
-export const LOGO_OPTIONS = ["logo1", "logo2", "logo3"] as const;
+export const LOGO_OPTIONS = ["logo1", "logo2", "logo3", "logo4"] as const;
 export type LogoId = (typeof LOGO_OPTIONS)[number];
 export const DEFAULT_LOGO: LogoId = "logo1";
 export const LOGO_STORAGE_KEY = "kimi-logo";
