@@ -370,11 +370,21 @@ function SystemIcon() {
   );
 }
 
-const FOLLOW_UPS = [
-  "Summarize key points",
-  "Explain with examples and scenarios",
-  "Create a mind map",
-  "Apply a suitable nursing theory",
+// label is the button text; prompt is what's actually sent as the next user
+// turn (with the full conversation still in context, so "your previous
+// answer" resolves correctly). They're the same for the short ones, but
+// "References" needs a more specific instruction than its one-word label to
+// reliably get a properly formatted, non-fabricated bibliography back.
+const FOLLOW_UPS: { label: string; prompt: string }[] = [
+  { label: "Summarize key points", prompt: "Summarize key points" },
+  { label: "Explain with examples and scenarios", prompt: "Explain with examples and scenarios" },
+  { label: "Create a mind map", prompt: "Create a mind map" },
+  { label: "Apply a suitable nursing theory", prompt: "Apply a suitable nursing theory" },
+  {
+    label: "References",
+    prompt:
+      "List the references and sources behind your previous answer, formatted as a bibliography. For each one, note the source type (journal article, textbook, clinical/practice guideline, reputable website, or video) and give a working link or full citation wherever you actually have one — do not invent a citation, link, or detail you're not confident is real; say plainly where you don't have a verifiable source for a claim.",
+  },
 ];
 
 function sleep(ms: number) {
@@ -907,7 +917,14 @@ export default function Home() {
               </div>
 
               {sections.map((s, si) => (
-                <details key={si} className="answer-section" open={si === 0}>
+                // Expanded by default — "###" sections are meant for genuinely
+                // skippable extras, but the model doesn't always honor that
+                // distinction (it sometimes reaches for "###" just to nest a
+                // topic's sub-parts), and a reader shouldn't have to click
+                // through several accordions to get a complete answer. Still
+                // collapsible per-section for whoever wants to hide one after
+                // reading it.
+                <details key={si} className="answer-section" open>
                   <summary>
                     <ChevronIcon className="chevron-icon" />
                     {s.title}
@@ -962,17 +979,17 @@ export default function Home() {
               <div className="flex gap-2 flex-wrap">
                 {FOLLOW_UPS.map((f) => (
                   <button
-                    key={f}
+                    key={f.label}
                     type="button"
                     onClick={() => {
                       playClickSound();
-                      postMessage(f);
+                      postMessage(f.prompt);
                     }}
                     disabled={loading}
                     className="pop-btn rounded-full px-3.5 py-2 text-xs font-semibold text-white disabled:opacity-40"
                     style={{ background: domainColor, boxShadow: "0 4px 0 rgba(0,0,0,0.25), 0 5px 8px rgba(0,0,0,0.15)" }}
                   >
-                    {f}
+                    {f.label}
                   </button>
                 ))}
               </div>
