@@ -10,7 +10,7 @@ Rules:
 - Never state a specific clinical fact, statistic, drug dosage, or diagnostic criterion with confidence unless you are sure it's correct. If you are not sure, say so explicitly rather than guessing — a plausible-sounding wrong fact is worse than admitting uncertainty, especially in a clinical or psychiatric context.
 - Never fabricate citations, studies, or sources. Only reference research you are confident actually exists, and say so plainly when you are not certain — this matters most for PhD-level research support.
 - Keep answers precise, using correct clinical and academic terminology at a level appropriate for nursing students, faculty, and graduate researchers.
-- Default to thorough, in-depth explanations, not short fragments. Under each heading, write multiple full explanatory paragraphs (not one sentence, and not one paragraph) — cover the underlying mechanism, the "why" behind it, supporting evidence or reasoning, and clinical or practical relevance. A single sentence, or a heading followed by one line, is never an acceptable amount of content for a graduate-level answer — treat that as a sign to keep writing, not a finished section. Use bullets only for content that is genuinely a list (e.g. a set of symptoms or medications), never as a substitute for explaining a concept in prose. Only give a short, bullet-heavy answer when the user explicitly asks you to shorten it, summarize, or "just give the key points" — and only for that one reply, not the rest of the conversation.
+- Always provide detailed and comprehensive responses. Do not give overly short answers or limit each point to one or two sentences. When presenting multiple points (e.g. multiple headings, multiple causes, multiple steps), explain each one in sufficient depth — include the relevant reasoning, context, examples, implications, and supporting details where useful. Each point should be fully developed so the reader understands not only *what* the point is, but *why* it matters and *how* it applies (e.g. the underlying mechanism, the clinical or practical relevance, and supporting evidence or reasoning). A single sentence, or a heading followed by one line, is never an acceptable amount of content for a graduate-level answer — treat that as a sign to keep writing, not a finished section. Avoid unnecessary repetition or filler, but prioritize completeness and clarity over brevity — the response should be detailed enough to address the topic thoroughly while remaining well-structured and easy to follow. Use bullets only for content that is genuinely a list (e.g. a set of symptoms or medications), never as a substitute for explaining a concept in prose. Only give a short, bullet-heavy answer when the user explicitly asks you to shorten it, summarize, or "just give the key points" — and only for that one reply, not the rest of the conversation.
 - If you used the web search results provided to you, say so naturally in the text (e.g. "according to a 2024 review in..." or "per the CDC's guidance...") so the reader knows the kind of source behind a claim. The verified source list is shown separately below your answer from the actual search results — never invent a source, title, author, journal name, or link yourself; only speak to what the search results actually returned.
 - Format every answer as Markdown so it can be scanned:
   - For a short, simple answer (a definition, a quick fact, a one-line clarification), just write plain prose — do not force structure onto something that doesn't need it.
@@ -47,9 +47,15 @@ const FALLBACK_MODELS = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.7-fla
 //
 // Deliberately excluded from OpenRouter's free catalog: coding-agent models
 // (poolside/laguna-s-2.1, nex-agi/nex-n2.5-pro — off-domain for clinical
-// education), a finance-tuned model (inclusionai/ling-3.0-flash-fin), and
-// nvidia/nemotron-3.5-content-safety, which is a moderation/guardrail
-// classifier, not a conversational model — it wouldn't answer "hi" at all.
+// education), a finance-tuned model (inclusionai/ling-3.0-flash-fin),
+// nvidia/nemotron-3.5-content-safety (a moderation/guardrail classifier, not
+// a conversational model — it wouldn't answer "hi" at all), and
+// thinkingmachines/inkling(-small) — confirmed via a live test call that
+// OpenRouter hard-403s both with "only available on agentic harnesses,"
+// a permanent policy restriction, not a transient outage. Keeping either in
+// this list is actively harmful: since 403 isn't a transient status, hitting
+// one aborts the whole fallback loop (see TRANSIENT_STATUSES below) and
+// would have cut off every model listed after it.
 const OPENROUTER_FALLBACK_MODELS: { model: string; supportsVision: boolean }[] = [
   { model: "inclusionai/ling-3.0-flash-sante:free", supportsVision: false }, // health/medicine-tuned
   { model: "nvidia/nemotron-3-super-120b-a12b:free", supportsVision: false },
@@ -59,8 +65,6 @@ const OPENROUTER_FALLBACK_MODELS: { model: string; supportsVision: boolean }[] =
   { model: "google/gemma-4-26b-a4b-it:free", supportsVision: true },
   { model: "inclusionai/ling-3.0-flash-vl:free", supportsVision: true },
   { model: "dots-studio/dots-3-note-preview:free", supportsVision: true },
-  { model: "thinkingmachines/inkling:free", supportsVision: true },
-  { model: "thinkingmachines/inkling-small:free", supportsVision: true },
   { model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", supportsVision: true },
   { model: "liquid/lfm-2.5-2.6b:free", supportsVision: false },
 ];
@@ -70,7 +74,17 @@ const OPENROUTER_FALLBACK_MODELS: { model: string; supportsVision: boolean }[] =
 // worth trying the next fallback for, and worth telling the user is a
 // capacity issue rather than a real bug, as opposed to a 400/401/500 class
 // error that indicates something is actually broken in the request itself.
-const TRANSIENT_STATUSES = new Set([429, 404, 503, 504]);
+//
+// 502 is included even though we synthesize it ourselves (see "no reply in
+// response" below) rather than a provider returning it: some free models —
+// particularly ones with a hidden "reasoning" pass before the visible answer
+// — can return a genuinely successful HTTP response with an empty/null
+// message when their reasoning consumes the whole token budget before
+// reaching the answer. That's a per-attempt fluke worth trying the next
+// model for, not a sign the request itself is broken — treating it as fatal
+// was cutting the fallback chain short on some of the free models that
+// otherwise work fine.
+const TRANSIENT_STATUSES = new Set([429, 404, 502, 503, 504]);
 
 // Of those, only "overloaded" (503) is worth an immediate short retry on the
 // SAME model — it's a fast, explicit rejection from the provider that often
