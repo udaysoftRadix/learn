@@ -519,11 +519,16 @@ export default function Home() {
     setError(null);
   }
 
-  async function deleteChat(chatId: string) {
+  async function deleteChat(chatId: string): Promise<boolean> {
     const supabase = createClient();
+    const { error } = await supabase.from("chats").delete().eq("id", chatId);
+    if (error) {
+      console.error("Failed to delete chat:", error);
+      return false;
+    }
     setChats((prev) => prev.filter((c) => c.id !== chatId));
     if (chatId === currentChatId) startNewChat();
-    await supabase.from("chats").delete().eq("id", chatId);
+    return true;
   }
 
   async function handleLogout() {

@@ -424,3 +424,145 @@ button:not(:disabled) {
   background: var(--paper-0);
   box-shadow: 0 3px 0 var(--ink-300), 0 4px 6px rgba(0, 0, 0, 0.08);
 }
+
+/* Delete-duty sweep animation (chat-sidebar delete flow). Durations are set
+   per-instance via inline animationDuration/animationDelay from JS, so these
+   rules only own the keyframe shape — safe to share across many rows. */
+.dd-fragment {
+  position: absolute;
+  width: 9px;
+  height: 6px;
+  border-radius: 1px;
+  background: var(--ink-300);
+  opacity: 0;
+}
+
+@keyframes dd-crumble-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-4px) rotate(0deg) scale(0.6);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(2px) rotate(var(--dd-rot)) scale(1);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) rotate(var(--dd-rot)) scale(1);
+  }
+}
+.dd-fragment-crumble {
+  animation: dd-crumble-in 260ms ease-out forwards;
+}
+
+@keyframes dd-sweep-away {
+  0% {
+    opacity: 1;
+    transform: translateX(0) rotate(var(--dd-rot)) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(230%) rotate(calc(var(--dd-rot) + 90deg)) scale(0.3);
+  }
+}
+.dd-fragment-sweep {
+  animation: dd-sweep-away 420ms ease-in forwards;
+}
+
+@keyframes dd-fragment-kick {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(var(--dd-rot)) scale(1);
+  }
+  30% {
+    transform: translate(-4px, 2px) rotate(var(--dd-rot)) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(240%, -14px) rotate(calc(var(--dd-rot) + 180deg)) scale(0.25);
+  }
+}
+.dd-fragment-kick {
+  animation: dd-fragment-kick 220ms ease-in forwards;
+}
+
+@keyframes dd-fragment-restore {
+  0% {
+    opacity: 0;
+    transform: translateX(230%) rotate(calc(var(--dd-rot) + 90deg)) scale(0.3);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(0) rotate(var(--dd-rot)) scale(0.6);
+  }
+}
+.dd-fragment-restore {
+  animation: dd-fragment-restore 380ms ease-out forwards;
+}
+
+@keyframes dd-worker-sweep {
+  0% {
+    left: -14%;
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  100% {
+    left: 74%;
+    opacity: 1;
+  }
+}
+.dd-worker {
+  position: absolute;
+  top: 4%;
+  animation-name: dd-worker-sweep;
+  animation-timing-function: ease-in-out;
+  animation-fill-mode: forwards;
+}
+.dd-worker-reverse {
+  animation-direction: reverse;
+}
+
+@keyframes dd-broom-swing {
+  0%,
+  100% {
+    transform: rotate(-6deg);
+  }
+  50% {
+    transform: rotate(10deg);
+  }
+}
+.dd-worker-arm {
+  animation: dd-broom-swing 220ms ease-in-out infinite;
+}
+
+@keyframes dd-leg-kick {
+  0%,
+  70% {
+    transform: rotate(0deg);
+  }
+  85% {
+    transform: rotate(-22deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+.dd-worker-leg {
+  animation: dd-leg-kick 480ms ease-in-out 1;
+}
+
+@keyframes dd-drain {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}
+.dd-drain {
+  animation-name: dd-drain;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}

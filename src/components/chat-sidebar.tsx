@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { playClickSound } from "@/components/kimi-ui";
+import { DeleteSweepRow } from "@/components/delete-sweep";
 
 export type ChatSummary = { id: string; title: string };
 
@@ -70,18 +71,6 @@ function PlusIcon() {
   );
 }
 
-function TrashIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="3 6 5 6 21 6" />
-      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-      <path d="M10 11v6" />
-      <path d="M14 11v6" />
-      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-    </svg>
-  );
-}
-
 function CloseIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -116,7 +105,7 @@ export function ChatSidebar({
   currentChatId: string | null;
   onSelectChat: (id: string) => void;
   onNewChat: () => void;
-  onDeleteChat: (id: string) => void;
+  onDeleteChat: (id: string) => Promise<boolean>;
   isOpen: boolean;
   onClose: () => void;
   userEmail: string | null;
@@ -124,6 +113,20 @@ export function ChatSidebar({
 }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
+  const [armedDeleteIds, setArmedDeleteIds] = useState<Set<string>>(new Set());
+
+  function armDelete(id: string) {
+    setArmedDeleteIds((prev) => new Set(prev).add(id));
+  }
+
+  function disarmDelete(id: string) {
+    setArmedDeleteIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }
 
   return (
     <>
@@ -160,26 +163,19 @@ export function ChatSidebar({
         <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-1">
           {chats.length === 0 && <p className="text-xs text-ink-600 text-center py-6 px-3">No saved chats yet — start one!</p>}
           {chats.map((chat) => (
-            <div
+            <DeleteSweepRow
               key={chat.id}
-              onClick={() => onSelectChat(chat.id)}
-              className="group flex items-center gap-1 rounded-xl px-3 py-2.5 cursor-pointer hover:bg-black/5"
-              style={chat.id === currentChatId ? { background: "var(--psych-100)" } : undefined}
-            >
-              <span className="flex-1 text-sm truncate">{chat.title}</span>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  playClickSound();
-                  setConfirmDeleteId(chat.id);
-                }}
-                aria-label="Delete chat"
-                className="pop-btn opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 p-1.5 rounded-md hover:bg-black/10 shrink-0 text-ink-600"
-              >
-                <TrashIcon />
-              </button>
-            </div>
+              title={chat.title}
+              isCurrent={chat.id === currentChatId}
+              armed={armedDeleteIds.has(chat.id)}
+              onSelect={() => onSelectChat(chat.id)}
+              onRequestDelete={() => {
+                playClickSound();
+                setConfirmDeleteId(chat.id);
+              }}
+              onCommitDelete={() => onDeleteChat(chat.id)}
+              onSettle={() => disarmDelete(chat.id)}
+            />
           ))}
         </div>
 
@@ -205,7 +201,7 @@ export function ChatSidebar({
           confirmLabel="Delete"
           danger
           onConfirm={() => {
-            onDeleteChat(confirmDeleteId);
+            armDelete(confirmDeleteId);
             setConfirmDeleteId(null);
           }}
           onCancel={() => setConfirmDeleteId(null)}
