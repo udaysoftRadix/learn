@@ -179,18 +179,21 @@ export function ChatSidebar({
           ))}
         </div>
 
-        <div className="p-3 border-t border-ink-300 flex items-center justify-between gap-2">
-          <span className="text-xs text-ink-600 truncate">{userEmail}</span>
-          <button
-            type="button"
-            onClick={() => {
-              playClickSound();
-              setConfirmLogout(true);
-            }}
-            className="pop-btn pop-btn-subtle rounded-full px-3 py-1.5 text-xs font-medium shrink-0"
-          >
-            Log out
-          </button>
+        <div className="p-3 border-t border-ink-300 flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-ink-600 truncate">{userEmail}</span>
+            <button
+              type="button"
+              onClick={() => {
+                playClickSound();
+                setConfirmLogout(true);
+              }}
+              className="pop-btn pop-btn-subtle rounded-full px-3 py-1.5 text-xs font-medium shrink-0"
+            >
+              Log out
+            </button>
+          </div>
+          <p className="text-[11px] text-ink-600 text-center">© 2026 Kimi, Made with ❤️ for Kim.</p>
         </div>
       </aside>
 
